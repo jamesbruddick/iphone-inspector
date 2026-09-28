@@ -1,6 +1,6 @@
 [package]
 name = "iphone-inspector"
-version = "4.0.0"
+version = "4.0.1"
 edition = "2024"
 # The floor set by tray-icon and muda; CI builds on it so it stays true.
 rust-version = "1.90"

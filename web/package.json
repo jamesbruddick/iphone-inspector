@@ -1,6 +1,6 @@
 {
   "name": "iphone-inspector-web",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "private": true,
   "type": "module",
   "description": "The iPhone Inspector UI. Built into dist/ and embedded in the Rust app at compile time.",

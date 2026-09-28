@@ -31,7 +31,7 @@ use tao::event::{Event, StartCause};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tray_icon::menu::MenuEvent;
 
-use crate::monitor::Monitor;
+use crate::monitor::{Monitor, Snapshot};
 use crate::tray::{Action, Tray, UserEvent};
 
 const DEFAULT_PORT: u16 = 3820;
@@ -148,6 +148,10 @@ fn run(
 
     let proxy = event_loop.create_proxy();
     let mut changes = monitor.subscribe();
+    // Polling started before this subscription, and a receiver counts the value it subscribed to
+    // as seen: without this, a phone plugged in before launch never reaches the tray, because the
+    // list does not change again until something is plugged or unplugged.
+    changes.mark_changed();
     runtime.spawn(async move {
         while changes.changed().await.is_ok() {
             let snapshot = changes.borrow_and_update().clone();
@@ -159,6 +163,8 @@ fn run(
 
     autostart::configure_on_launch();
     let mut tray: Option<Tray> = None;
+    // The newest list, for a tray created after it arrived.
+    let mut latest: Option<Snapshot> = None;
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -169,7 +175,12 @@ fn run(
             // The tray icon can only be created once the loop is running (macOS requires it).
             Event::NewEvents(StartCause::Init) => {
                 match Tray::new() {
-                    Ok(t) => tray = Some(t),
+                    Ok(mut t) => {
+                        if let Some(snapshot) = &latest {
+                            t.update(snapshot);
+                        }
+                        tray = Some(t);
+                    }
                     Err(e) => alert(&format!("Could not create the tray icon: {e}")),
                 }
                 if background { Action::None } else { Action::OpenPage(None) }
@@ -178,6 +189,7 @@ fn run(
                 if let Some(t) = tray.as_mut() {
                     t.update(&snapshot);
                 }
+                latest = Some(snapshot);
                 Action::None
             }
             Event::UserEvent(UserEvent::Menu(e)) => tray.as_mut().map_or(Action::None, |t| t.handle_menu(&e)),

@@ -137,7 +137,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
-      NAME: iphone-inspector-${{ matrix.label }}
+      NAME: iphone-inspector-${{ needs.check.outputs.version }}-${{ matrix.label }}
       EXE: target/${{ matrix.target }}/release/iphone-inspector
       VERSION: ${{ needs.check.outputs.version }}
     steps:
@@ -171,7 +171,7 @@ jobs:
       # Each system gets the download it installs from, plus a portable archive
       # where people also expect one. Archives unpack into one directory, so
       # extracting in a full Downloads folder does not scatter files into it.
-      # The version is left off the names: the release carries it.
+      # Every name carries the version, so a saved download says which it is.
       - run: mkdir dist
 
       # macOS: an app bundle in a disk image with the usual drag-to-Applications
@@ -242,6 +242,8 @@ jobs:
             -d Version=$env:VERSION -d Exe="$exe" `
             -d RepoUrl=https://github.com/${{ github.repository }} `
             -o "dist/$env:NAME.msi"
+          # WiX writes its debug symbols beside the installer; they are not a download.
+          Remove-Item "dist/$env:NAME.wixpdb"
 
           $portable = "dist/$env:NAME-portable"
           New-Item -ItemType Directory $portable | Out-Null
@@ -311,11 +313,11 @@ jobs:
 
             | System | Download |
             | --- | --- |
-            | Mac with Apple silicon (M1 and later) | [`iphone-inspector-macos-arm64.dmg`](https://github.com/${{ github.repository }}/releases/download/v${{ needs.check.outputs.version }}/iphone-inspector-macos-arm64.dmg) |
-            | Mac with Intel | [`iphone-inspector-macos-amd64.dmg`](https://github.com/${{ github.repository }}/releases/download/v${{ needs.check.outputs.version }}/iphone-inspector-macos-amd64.dmg) |
-            | Windows 10 and 11 | [`iphone-inspector-windows-amd64.msi`](https://github.com/${{ github.repository }}/releases/download/v${{ needs.check.outputs.version }}/iphone-inspector-windows-amd64.msi) |
-            | Ubuntu and Debian (Intel/AMD) | [`iphone-inspector-linux-amd64.deb`](https://github.com/${{ github.repository }}/releases/download/v${{ needs.check.outputs.version }}/iphone-inspector-linux-amd64.deb) |
-            | Ubuntu and Debian (ARM) | [`iphone-inspector-linux-arm64.deb`](https://github.com/${{ github.repository }}/releases/download/v${{ needs.check.outputs.version }}/iphone-inspector-linux-arm64.deb) |
+            | Mac with Apple silicon (M1 and later) | [`iphone-inspector-${{ needs.check.outputs.version }}-macos-arm64.dmg`](https://github.com/${{ github.repository }}/releases/download/v${{ needs.check.outputs.version }}/iphone-inspector-${{ needs.check.outputs.version }}-macos-arm64.dmg) |
+            | Mac with Intel | [`iphone-inspector-${{ needs.check.outputs.version }}-macos-amd64.dmg`](https://github.com/${{ github.repository }}/releases/download/v${{ needs.check.outputs.version }}/iphone-inspector-${{ needs.check.outputs.version }}-macos-amd64.dmg) |
+            | Windows 10 and 11 | [`iphone-inspector-${{ needs.check.outputs.version }}-windows-amd64.msi`](https://github.com/${{ github.repository }}/releases/download/v${{ needs.check.outputs.version }}/iphone-inspector-${{ needs.check.outputs.version }}-windows-amd64.msi) |
+            | Ubuntu and Debian (Intel/AMD) | [`iphone-inspector-${{ needs.check.outputs.version }}-linux-amd64.deb`](https://github.com/${{ github.repository }}/releases/download/v${{ needs.check.outputs.version }}/iphone-inspector-${{ needs.check.outputs.version }}-linux-amd64.deb) |
+            | Ubuntu and Debian (ARM) | [`iphone-inspector-${{ needs.check.outputs.version }}-linux-arm64.deb`](https://github.com/${{ github.repository }}/releases/download/v${{ needs.check.outputs.version }}/iphone-inspector-${{ needs.check.outputs.version }}-linux-arm64.deb) |
 
             Portable versions that run without installing are listed under **Assets**
             below: `-portable.zip` for Windows and `.tar.gz` for other Linux systems.
@@ -335,7 +337,7 @@ jobs:
             service and tray library it needs:
 
             ```sh
-            sudo apt install ./iphone-inspector-linux-amd64.deb
+            sudo apt install ./iphone-inspector-${{ needs.check.outputs.version }}-linux-amd64.deb
             ```
 
             Built on Ubuntu 24.04, so it needs Ubuntu 24.04 or Debian 13 or newer.
@@ -349,7 +351,7 @@ jobs:
             built by this workflow from this source:
 
             ```sh
-            gh attestation verify iphone-inspector-macos-arm64.dmg --repo ${{ github.repository }}
+            gh attestation verify iphone-inspector-${{ needs.check.outputs.version }}-macos-arm64.dmg --repo ${{ github.repository }}
             ```
 
             [MIT License](https://github.com/${{ github.repository }}/blob/v${{ needs.check.outputs.version }}/LICENSE)

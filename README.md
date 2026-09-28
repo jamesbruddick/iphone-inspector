@@ -18,11 +18,11 @@ Get the installer for your system from the latest release on the Releases page:
 
 | System | Download |
 |---|---|
-| Mac with Apple silicon (M1 and later) | `iphone-inspector-macos-arm64.dmg` |
-| Mac with Intel | `iphone-inspector-macos-amd64.dmg` |
-| Windows 10 and 11 | `iphone-inspector-windows-amd64.msi` |
-| Ubuntu and Debian (Intel/AMD) | `iphone-inspector-linux-amd64.deb` |
-| Ubuntu and Debian (ARM) | `iphone-inspector-linux-arm64.deb` |
+| Mac with Apple silicon (M1 and later) | `iphone-inspector-<version>-macos-arm64.dmg` |
+| Mac with Intel | `iphone-inspector-<version>-macos-amd64.dmg` |
+| Windows 10 and 11 | `iphone-inspector-<version>-windows-amd64.msi` |
+| Ubuntu and Debian (Intel/AMD) | `iphone-inspector-<version>-linux-amd64.deb` |
+| Ubuntu and Debian (ARM) | `iphone-inspector-<version>-linux-arm64.deb` |
 
 - **macOS:** open the `.dmg` and drag *iPhone Inspector* into Applications. It is not notarized, so
   the first time, open it, then choose **Open Anyway** in System Settings → Privacy & Security.
@@ -30,7 +30,7 @@ Get the installer for your system from the latest release on the Releases page:
   `%LocalAppData%\Programs\iPhone Inspector`, adds a Start menu entry, and is removed from
   Settings → Apps, which also takes it out of your login items. If SmartScreen stops it, choose
   **More info → Run anyway**.
-- **Ubuntu and Debian:** `sudo apt install ./iphone-inspector-linux-amd64.deb` installs it with the
+- **Ubuntu and Debian:** `sudo apt install ./iphone-inspector-<version>-linux-amd64.deb` installs it with the
   USB service and tray library it needs, and adds it to the app menu. It is built on Ubuntu 24.04,
   so it needs 24.04 or Debian 13 or newer.
 
