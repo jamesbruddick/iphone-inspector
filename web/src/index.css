@@ -1,0 +1,73 @@
+@import "tailwindcss";
+/* Self-hosted: a local-only tool must not phone a font CDN on every load. */
+@import "@fontsource-variable/manrope";
+
+@theme {
+  /* One type scale for the whole app, about a point larger than Tailwind's defaults. Every size in
+     the UI comes from here - no arbitrary text-[13px] scattered through components - so raising or
+     lowering the whole app is a change to these nine lines. The smallest step, 2xs, is reserved for
+     the uppercase section labels and hint lines. */
+  --text-2xs: 0.6875rem; /* 11px */
+  --text-2xs--line-height: 1.45;
+  --text-xs: 0.78125rem; /* 12.5px */
+  --text-xs--line-height: 1.5;
+  --text-sm: 0.84375rem; /* 13.5px */
+  --text-sm--line-height: 1.55;
+  --text-base: 0.9375rem; /* 15px */
+  --text-base--line-height: 1.6;
+  --text-lg: 1.0625rem; /* 17px */
+  --text-lg--line-height: 1.45;
+  --text-xl: 1.25rem; /* 20px */
+  --text-xl--line-height: 1.35;
+  --text-2xl: 1.5rem; /* 24px */
+  --text-2xl--line-height: 1.25;
+  --text-3xl: 1.75rem; /* 28px */
+  --text-3xl--line-height: 1.2;
+  --text-4xl: 2.125rem; /* 34px */
+  --text-4xl--line-height: 1.15;
+
+  --font-sans: "Manrope Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    font-feature-settings: "cv11", "ss01";
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* One focus treatment everywhere, rather than per-component rings that drift apart. */
+  :focus-visible {
+    outline: 2px solid var(--color-blue-600);
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  /* Sidebar and long check lists scroll independently; a thin bar keeps them from shouting. */
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-slate-300) transparent;
+  }
+
+  @variant dark {
+    .scroll-thin {
+      scrollbar-color: var(--color-slate-700) transparent;
+    }
+  }
+}
+
+/* Printing a device page gives just the stats, without the shell around them. */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+}

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=iPhone Inspector
+GenericName=iPhone Stats
+Comment=See every stat a connected iPhone reports over USB
+Exec=iphone-inspector
+TryExec=iphone-inspector
+Icon=iphone-inspector
+Terminal=false
+Categories=Utility;
+Keywords=iPhone;iOS;Apple;battery;USB;device;
+StartupNotify=false

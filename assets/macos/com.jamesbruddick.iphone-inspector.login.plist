@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Start at Login on macOS 13+. The release workflow puts this in the app bundle's
+     Contents/Library/LaunchAgents, and src/autostart.rs registers it with SMAppService. Living in
+     the bundle, it is removed with the app. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.jamesbruddick.iphone-inspector.login</string>
+  <key>BundleProgram</key><string>Contents/MacOS/iphone-inspector</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>iphone-inspector</string>
+    <string>--background</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
+  <key>AssociatedBundleIdentifiers</key>
+  <array>
+    <string>com.jamesbruddick.iphone-inspector</string>
+  </array>
+</dict>
+</plist>

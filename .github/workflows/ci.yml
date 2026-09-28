@@ -1,0 +1,127 @@
+name: CI
+
+# Everything that reaches main, and everything proposed for it. The release
+# workflow only fires on a version bump and goes straight to publishing, so this
+# is the gate between a broken commit and a download.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A push that lands on top of another one has already answered the question the
+# first run was asking.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The UI is compiled into the binary, so every Rust job below needs it built
+  # first. Built once here and handed on.
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: web/package.json
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: web/.node-version
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      # Type-checks as well: `build` runs tsc before Vite.
+      - run: pnpm build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-dist
+          path: web/dist
+          if-no-files-found: error
+
+  # All three systems, not one: the tray, autostart, notifications and the USB
+  # service address are each per-OS code that only its own system compiles.
+  app:
+    needs: web
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: web/dist
+
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev libdbus-1-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo fmt --check
+      # --all-targets so the tests are linted too; warnings are errors.
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      # --locked so a Cargo.lock that no longer matches the manifest fails here
+      # rather than in the release build, which uses --locked too.
+      - run: cargo test --locked
+
+  # `rust-version` is a promise to anyone building from source. Everything else
+  # here runs on stable, so without this the code drifts onto whatever the
+  # toolchain of the day allows. The version is read from the manifest, so there
+  # is one place to change it.
+  msrv:
+    needs: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: web/dist
+
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev libdbus-1-dev
+
+      - id: msrv
+        run: echo "version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+
+      # `check`, not `test`: what the floor has to prove is that the code and
+      # the locked dependencies still compile on it.
+      - run: cargo check --all-targets --locked

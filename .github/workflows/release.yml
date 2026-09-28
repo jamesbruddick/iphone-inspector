@@ -1,0 +1,355 @@
+name: Release
+
+# Only a version bump publishes; every other push to main is ignored. Running it
+# by hand (Actions -> Release -> Run workflow) builds every download without
+# publishing, to try the packaging before a real release - or, with "publish"
+# ticked, releases the current version if it has not been already, which is how
+# a release that failed part way gets finished.
+on:
+  push:
+    branches: [main]
+    paths: ['Cargo.toml']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the release (unticked, the downloads stay on the run's page)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  BIN: iphone-inspector
+  APP: iPhone Inspector
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      changed: ${{ steps.version.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - id: version
+        name: Compare the package version against the parent commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          read_version() { grep -m1 '^version' | sed -E 's/.*"(.*)".*/\1/'; }
+          new=$(read_version < Cargo.toml)
+          old=$(git show HEAD^:Cargo.toml | read_version || true)
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$PUBLISH" != true ]; then
+            echo "Trial run: building $new without publishing."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            if gh api "repos/$REPO/git/ref/tags/v$new" >/dev/null 2>&1; then
+              echo "::error::v$new is already released. Bump the version to release again."
+              exit 1
+            fi
+            echo "Publishing $new by hand."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif [ "$old" = "$new" ]; then
+            echo "Version unchanged at $new; nothing to release."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          elif gh api "repos/$REPO/git/ref/tags/v$new" >/dev/null 2>&1; then
+            # A revert-and-reapply can re-present a version that is already tagged.
+            echo "Tag v$new already exists; nothing to release."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version $old -> $new; releasing."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # The UI is compiled into the binary. Built once, so every download carries
+  # the same one.
+  web:
+    needs: check
+    if: needs.check.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: web/package.json
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: web/.node-version
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-dist
+          path: web/dist
+          if-no-files-found: error
+
+  build:
+    needs: [check, web]
+    strategy:
+      fail-fast: false
+      matrix:
+        # `target` is the triple cargo needs; `label` is what the download is
+        # called, answering "which machine do I have".
+        include:
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            label: linux-arm64
+          # Pinned rather than -latest: the .deb needs the glibc of the
+          # system it was built on, and the release notes promise 24.04.
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            label: linux-amd64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            label: macos-arm64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            label: macos-amd64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: windows-amd64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      NAME: iphone-inspector-${{ matrix.label }}
+      EXE: target/${{ matrix.target }}/release/iphone-inspector
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: web/dist
+
+      # The tray and notifications link GTK, AppIndicator and D-Bus on Linux.
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev libdbus-1-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # TLS to the phone is rustls on ring, which needs a C compiler - present
+      # on every one of these runners - and no system OpenSSL. macos-amd64
+      # cross-compiles from the arm64 runner against the same universal SDK.
+      # On Windows, build.rs compiles in the icon and file details.
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # Each system gets the download it installs from, plus a portable archive
+      # where people also expect one. Archives unpack into one directory, so
+      # extracting in a full Downloads folder does not scatter files into it.
+      # The version is left off the names: the release carries it.
+      - run: mkdir dist
+
+      # macOS: an app bundle in a disk image with the usual drag-to-Applications
+      # window. It is a tray app, so LSUIElement keeps it out of the Dock, and
+      # inside a bundle its notifications come from the app rather than from
+      # Finder. The bundle is signed ad hoc - not notarized - so the first launch
+      # needs Open Anyway.
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          stage=$(mktemp -d)
+          app="$stage/$APP.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Library/LaunchAgents"
+          cp "$EXE" "$app/Contents/MacOS/$BIN"
+          cp assets/macos/AppIcon.icns "$app/Contents/Resources/"
+          # Start at Login, registered from inside the bundle so it leaves with the app.
+          cp assets/macos/com.jamesbruddick.iphone-inspector.login.plist "$app/Contents/Library/LaunchAgents/"
+          cat > "$app/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>$BIN</string>
+            <key>CFBundleIdentifier</key><string>com.jamesbruddick.iphone-inspector</string>
+            <key>CFBundleName</key><string>$APP</string>
+            <key>CFBundleDisplayName</key><string>$APP</string>
+            <key>CFBundleIconFile</key><string>AppIcon</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>$VERSION</string>
+            <key>CFBundleVersion</key><string>$VERSION</string>
+            <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>LSUIElement</key><true/>
+            <key>NSHighResolutionCapable</key><true/>
+            <key>NSHumanReadableCopyright</key><string>Copyright © 2026 James B Ruddick</string>
+          </dict>
+          </plist>
+          EOF
+          plutil -lint "$app/Contents/Info.plist"
+          codesign --force --sign - "$app"
+          ln -s /Applications "$stage/Applications"
+
+          # hdiutil on hosted runners now and then fails with "Resource busy";
+          # a retry gets past it.
+          for attempt in 1 2 3; do
+            hdiutil create -volname "$APP" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "dist/$NAME.dmg" && break
+            [ "$attempt" = 3 ] && exit 1
+            sleep 5
+          done
+          hdiutil verify "dist/$NAME.dmg"
+
+      # Windows: a per-user installer (see assets/windows/main.wxs), and the bare
+      # .exe in a zip for anyone who would rather not install.
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          # Pinned, with its extensions at the same version, so a new WiX
+          # release cannot change the installer between two builds.
+          dotnet tool install --global wix --version 6.0.2
+          $env:PATH += ";$env:USERPROFILE\.dotnet\tools"
+          wix extension add --global WixToolset.UI.wixext/6.0.2 WixToolset.Util.wixext/6.0.2
+          $exe = (Resolve-Path "$env:EXE.exe").Path
+          wix build assets/windows/main.wxs -arch x64 -culture en-US `
+            -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext `
+            -d Version=$env:VERSION -d Exe="$exe" `
+            -d RepoUrl=https://github.com/${{ github.repository }} `
+            -o "dist/$env:NAME.msi"
+
+          $portable = "dist/$env:NAME-portable"
+          New-Item -ItemType Directory $portable | Out-Null
+          Copy-Item $exe, README.md, LICENSE $portable
+          Compress-Archive -Path $portable -DestinationPath "$portable.zip"
+          Remove-Item -Recurse $portable
+
+      # Linux: a .deb for Debian and Ubuntu - it pulls in usbmuxd and the tray
+      # library and adds a menu entry - and a tarball for everything else.
+      - if: runner.os == 'Linux'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cargo deb --no-build --target ${{ matrix.target }} --output "dist/$NAME.deb"
+          dpkg-deb --info "dist/$NAME.deb"
+
+          mkdir "dist/$NAME"
+          cp "$EXE" README.md LICENSE assets/linux/iphone-inspector.desktop "dist/$NAME/"
+          cp assets/linux/icons/256x256/iphone-inspector.png "dist/$NAME/"
+          tar -C dist -czf "dist/$NAME.tar.gz" "$NAME"
+          rm -rf "dist/$NAME"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.label }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: [check, build]
+    # A hand-started run publishes only when asked to.
+    if: github.event_name == 'push' || inputs.publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      # Provenance is signed with a workflow OIDC identity, so anyone can prove
+      # a download came from this repository at this commit.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: '*-*64'
+          merge-multiple: true
+
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/*
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ needs.check.outputs.version }}
+          name: iPhone Inspector ${{ needs.check.outputs.version }}
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          # The reader is here to answer one question - which file do I
+          # download - so the table comes first.
+          body: |
+            ## Download
+
+            | System | Download |
+            | --- | --- |
+            | Mac with Apple silicon (M1 and later) | [`iphone-inspector-macos-arm64.dmg`](https://github.com/${{ github.repository }}/releases/download/v${{ needs.check.outputs.version }}/iphone-inspector-macos-arm64.dmg) |
+            | Mac with Intel | [`iphone-inspector-macos-amd64.dmg`](https://github.com/${{ github.repository }}/releases/download/v${{ needs.check.outputs.version }}/iphone-inspector-macos-amd64.dmg) |
+            | Windows 10 and 11 | [`iphone-inspector-windows-amd64.msi`](https://github.com/${{ github.repository }}/releases/download/v${{ needs.check.outputs.version }}/iphone-inspector-windows-amd64.msi) |
+            | Ubuntu and Debian (Intel/AMD) | [`iphone-inspector-linux-amd64.deb`](https://github.com/${{ github.repository }}/releases/download/v${{ needs.check.outputs.version }}/iphone-inspector-linux-amd64.deb) |
+            | Ubuntu and Debian (ARM) | [`iphone-inspector-linux-arm64.deb`](https://github.com/${{ github.repository }}/releases/download/v${{ needs.check.outputs.version }}/iphone-inspector-linux-arm64.deb) |
+
+            Portable versions that run without installing are listed under **Assets**
+            below: `-portable.zip` for Windows and `.tar.gz` for other Linux systems.
+
+            ## Install
+
+            **macOS:** open the `.dmg` and drag **iPhone Inspector** into
+            Applications. It is not notarized, so the first time you open it, go to
+            System Settings → Privacy & Security and choose **Open Anyway**.
+
+            **Windows:** install the Apple Devices app from the Microsoft Store (it
+            provides the iPhone USB driver), then run the `.msi`. If SmartScreen
+            stops it, choose **More info → Run anyway**. It installs for your user
+            only, with no administrator prompt, and is removed from Settings → Apps.
+
+            **Ubuntu and Debian:** install it with apt, which also installs the USB
+            service and tray library it needs:
+
+            ```sh
+            sudo apt install ./iphone-inspector-linux-amd64.deb
+            ```
+
+            Built on Ubuntu 24.04, so it needs Ubuntu 24.04 or Debian 13 or newer.
+
+            Once installed, the downloaded file can be deleted. The app starts at
+            login in the tray; switch that off from its menu.
+
+            ## Verify
+
+            Every file is signed with build provenance, so you can confirm it was
+            built by this workflow from this source:
+
+            ```sh
+            gh attestation verify iphone-inspector-macos-arm64.dmg --repo ${{ github.repository }}
+            ```
+
+            [MIT License](https://github.com/${{ github.repository }}/blob/v${{ needs.check.outputs.version }}/LICENSE)

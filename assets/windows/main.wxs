@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The Windows installer, built by the release workflow with WiX:
+
+    wix build assets/windows/main.wxs -arch x64 -culture en-US
+      -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext
+      -d Version=4.0.0 -d Exe=target/x86_64-pc-windows-msvc/release/iphone-inspector.exe
+      -d RepoUrl=https://github.com/<owner>/<repo> -o iphone-inspector-windows-amd64.msi
+
+  Per-user, like Start at Login: it installs to %LocalAppData%\Programs\iPhone Inspector with no
+  administrator prompt. A newer version replaces an older one in place.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <!-- The UpgradeCode ties every version together, so it must never change. -->
+  <Package Name="iPhone Inspector" Manufacturer="James B Ruddick" Version="$(Version)"
+           UpgradeCode="8E73CAD6-80F3-43D3-98D4-879D39C6A26F" Scope="perUser">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of iPhone Inspector is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Installed apps list: its icon and links. (WixUI_Minimal already hides the Modify button.) -->
+    <Icon Id="AppIcon.ico" SourceFile="$(sys.SOURCEFILEDIR)app.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="$(RepoUrl)" />
+    <Property Id="ARPHELPLINK" Value="$(RepoUrl)/issues" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="UserProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="iPhone Inspector" />
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Files under the user profile are tracked by a value under HKCU rather than by the file,
+         and a component with both cannot have its GUID generated, so it is fixed here. Like the
+         UpgradeCode, it must never change. -->
+    <Component Id="App" Directory="INSTALLFOLDER" Guid="73849805-0574-451A-9CEB-267D92FFD3C9">
+      <File Id="MainExe" Source="$(Exe)" KeyPath="no" />
+      <RegistryValue Root="HKCU" Key="Software\iPhone Inspector" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+      <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+      <!-- Only removed if nothing else is installed there. -->
+      <RemoveFolder Id="RemoveUserProgramsFolder" Directory="UserProgramsFolder" On="uninstall" />
+    </Component>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut">
+        <Shortcut Id="StartMenuShortcut" Name="iPhone Inspector" Description="See every stat a connected iPhone reports over USB"
+                  Target="[#MainExe]" WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\iPhone Inspector" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <!-- A running copy holds the .exe open, so close it before files are replaced or removed. -->
+    <util:CloseApplication Id="CloseRunningApp" Target="iphone-inspector.exe" TerminateProcess="0" RebootPrompt="no" />
+
+    <!-- On a real uninstall (not the removal half of an upgrade), take the app out of the login
+         items while its .exe is still there to do it. -->
+    <CustomAction Id="ForgetStartAtLogin" FileRef="MainExe" ExeCommand="--uninstall" Execute="deferred" Impersonate="yes" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="ForgetStartAtLogin" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+
+    <!-- License, install, and a finish page that opens the app. -->
+    <WixVariable Id="WixUILicenseRtf" Value="$(sys.SOURCEFILEDIR)License.rtf" />
+    <WixVariable Id="WixUIDialogBmp" Value="$(sys.SOURCEFILEDIR)dialog.bmp" />
+    <WixVariable Id="WixUIBannerBmp" Value="$(sys.SOURCEFILEDIR)banner.bmp" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Open iPhone Inspector" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WixShellExecTarget" Value="[#MainExe]" />
+    <CustomAction Id="OpenApp" DllEntry="WixShellExec" Impersonate="yes" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" />
+    <ui:WixUI Id="WixUI_Minimal" />
+    <UI>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="OpenApp"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+    </UI>
+  </Package>
+</Wix>
